@@ -1,0 +1,261 @@
+
+
+# Time Series ARIMA Models in R
+# Copyright 2013 by Ani Katchova
+install.packages("ggplot2")
+install.packages("dplyr")
+install.packages( "tidyr")
+install.packages("data.table")
+install.packages("corrplot")
+install.packages("gridExtra")
+install.packages("forecast")
+install.packages("tseries")
+install.packages("TSA")
+install.packages("tibble")
+
+library('forecast')
+
+library("ggplot2", "dplyr", "tidyr", "data.table","corrplot","gridExtra", "forecast", "tseries", "TSA")
+library("tibble")
+
+#Load all_stocks_5yr.csv file
+snp <- read.csv(file="C:/Userdata/Training/big Data/Ryerson Course/CKME136/Data/all_stocks_5yr.csv",stringsAsFactors = FALSE)  
+#This command imports the required data set and saves it to the snp data frame.
+
+
+
+head(snp)
+summary(snp)
+str(snp)
+attach(snp)
+
+plot(snp)
+
+# Here we create the training set where we will compare the values for 2015 
+snp_training <- ts(snp, start=c(1995, 1), end=c(2014, 12), freq=12)
+
+create_ts <- function(x){
+  ts(x, start = c(1995, 1), frequency = 12)
+}
+
+plot_time_series(snp_training, 'S&P 500 Training Set')
+# Remove comment if you wish to publish plot on ploty
+# See GitHub repo for more details
+# plotly_POST(timeSeriesPlot, filename = "timeSeriesPlot")
+
+# DECOMPOSING TIME SERIES
+snp_stl <- plot_decomp(snp_training, 'S&P 500')
+
+snp_stl
+ggplotly(snp_stl)
+
+# SEASONAL PLOT 
+sp <- plot_seasonal(snp_training, 'S&P 500')
+
+sp
+ggplotly(sp)
+
+# DIAGNOSING ACF AND PACF PLOTS
+plot_acf_pacf(snp_training, 'S&P 500')
+# TRANSFORMING OUR DATA TO ADJUST FOR NON STATIONARY
+snp_diff <- diff(snp_training)
+
+tsDiff <- plot_time_series(snp_diff, 'First Difference')
+tsDiff
+ggplotly(tsDiff)
+
+# TESTS FOR STATIONARITY FOR DIFFERENCED TIME SERIES OBJECT
+Box.test(snp_diff, lag = 20, type = 'Ljung-Box')
+adf.test(snp_diff)
+
+# p-values seems small enough to infer stationarity for the first difference
+# Let's begin analysis with visually inspecting ACF and PACF plots
+
+# DIAGNOSING ACF AND PACF PLOTS FOR DIFFERENCED TIME SERIES OBJECT
+plot_acf_pacf(snp_diff, 'First Difference Time Series Object')
+
+# SEASONAL PLOT FOR DIFFERENCED TIME SERIES OBJECT
+spDiff <- plot_seasonal(snp_diff, 'First Difference Time Series Object')
+
+spDiff
+ggplotly(spDiff)
+
+# AUTO.ARIMA ESTIMATION
+auto.arima(snp_training)
+
+# From our visual inspection and auto.arima model we will choose an
+# ARIMA(0, 1, 1) with drift 
+
+# BUILD MODEL 
+fit <- Arima(snp_training, order = c(0,1,1), include.drift = TRUE)
+summary(fit)
+
+# RESIDUAL DIAGNOSTICS
+ggtsdiag_custom(fit, 'ARIMA(0,1,1)') + 
+  theme(panel.background = element_rect(fill = "gray98"),
+        panel.grid.minor = element_blank(),
+        axis.line.y = element_line(colour="gray"),
+        axis.line.x = element_line(colour="gray")) 
+
+residFit <- ggplot(data=fit, aes(residuals(fit))) + 
+  geom_histogram(aes(y =..density..),  
+                 binwidth = 5,
+                 col="turquoise4", fill="white") +
+  geom_density(col="turquoise4") +
+  theme(panel.background = element_rect(fill = "gray98"),
+        panel.grid.minor = element_blank(),
+        axis.line   = element_line(colour="gray"),
+        axis.line.x = element_line(colour="gray")) +
+  ggtitle("Plot of SP 500 ARIMA Model Residuals") 
+
+residFit
+
+# TEST SET THAT WE WILL COMPARE OUR FORECAST AGAINST 
+snp_test <- read.csv(here("data", "test_data.csv"))
+snp_test <- ts(snp_test$Adj.Close, start = c(2015, 1), frequency = 12)
+
+# FORECASTING
+# METHOD CHOSEN THROUGH BOX JENKINS METHODOLOGY WAS ARIMA(0,1,1) WITH DRIFT
+## ARIMA MODEL CHOSEN 
+fit_arima <- forecast(fit, h = 36)
+
+# Will download the rds file only if its not present in the models directory 
+if (is.null(here("models", 'arima.rds'))){
+  saveRDS(fit_arima, file = here("models", 'arima.rds'))
+}
+
+forSp500 <- autoplot(fit_arima, 
+                     holdout = snp_test, 
+                     forc_name = 'ARIMA', 
+                     ts_object_name = 'S&P 500')
+
+forSp500
+ggplotly(forSp500)
+# OTHER TRANSFORMATIONS
+
+## BOX COX TRANSFORMATION
+lambda <- BoxCox.lambda(snp_training)
+fit_snp_BC <- ar(BoxCox(snp_training,lambda))
+
+fit_BC <- forecast(fit_snp_BC,h=36,lambda=lambda)
+ggtsdiag_custom(fit_snp_BC, 'Box-Cox Transformation (AR(2))')
+
+# Will download the rds file only if its not present in the models directory 
+if (is.null(here("models", 'box_cox.rds'))){
+  saveRDS(fit_BC, file = here("models", 'box_cox.rds'))
+}
+
+s <- autoplot(fit_BC, 
+              holdout = snp_test,
+              forc_name = 'Box-Cox Transformation', 
+              ts_object_name = 'S&P 500')
+s
+ggplotly(s)
+
+# EXPONENTIAL SMOOTHING METHOD
+fit_ets <- forecast(ets(snp_training), h = 36)
+
+# Will download the rds file only if its not present in the models directory 
+if (is.null(here("models", 'ets.rds'))){
+  saveRDS(fit_ets, file = here("models", 'ets.rds'))
+}
+
+h <- autoplot(fit_ets, 
+              holdout=snp_test,
+              forc_name = 'Exponential Smoothing',
+              ts_object_name = 'S&P 500')
+
+h
+ggplotly(h) 
+
+# MEAN FORECAST METHOD
+fit_meanf <- meanf(snp_training, h = 36)
+
+# Will download the rds file only if its not present in the models directory 
+if (is.null(here("models", 'meanf.rds'))){
+  saveRDS(fit_meanf, file = here("models", 'meanf.rds'))
+}
+
+e <- autoplot(fit_meanf, 
+              holdout = snp_test,
+              forc_name = 'Mean',
+              ts_object_name = 'S&P 500') 
+e
+ggplotly(e)
+
+# NAIVE METHOD
+fit_naive <- naive(snp_training, h = 36)
+
+# Will download the rds file only if its not present in the models directory 
+if (is.null(here("models", 'naive.rds'))){
+  saveRDS(fit_naive, file = here("models", 'naive.rds'))
+}
+
+f <- autoplot(fit_naive, 
+              holdout = snp_test,
+              forc_name = 'Naive',
+              ts_object_name = 'S&P 500') 
+f
+ggplotly(f)
+
+# SEASONAL NAIVE METHOD
+fit_snaive <- snaive(snp_training, h = 36)
+
+# Will download the rds file only if its not present in the models directory 
+if (is.null(here("models", 'snaive.rds'))){
+  saveRDS(fit_snaive, file = here("models", 'snaive.rds'))
+}
+
+g <- autoplot(fit_snaive, 
+              holdout = snp_test,
+              forc_name = 'Seasonal Naive',
+              ts_object_name = 'S&P 500')
+g
+ggplotly(g)  
+
+# NEURAL NETWORKS
+fit_snp_net <- nnetar(snp_training, lambda = lambda) # Using BC lambda
+fit_net <- forecast(fit_snp_net, h = 36, PI = TRUE)
+
+# Will download the rds file only if its not present in the models directory 
+if (is.null(here("models", 'box_cox.rds'))){
+  saveRDS(fit_net, file = here("models", 'neural_net.rds'))
+}
+
+n <- autoplot(fit_net, 
+              holdout = snp_test,
+              forc_name = 'Neural Networks',
+              ts_object_name = 'S&P 500')
+n
+ggplotly(n)
+
+# COMPARE FORECAST ACCURACIES ACROSS DIFFERENT METHODS USED
+round(accuracy(fit_arima, snp_test), 3)
+round(accuracy(fit_BC, snp_test), 3)
+round(accuracy(fit_ets, snp_test), 3)
+round(accuracy(fit_meanf, snp_test), 3)
+round(accuracy(fit_naive, snp_test), 3)
+round(accuracy(fit_snaive, snp_test), 3)
+round(accuracy(fit_net, snp_test), 3)
+
+# CONCLUSIONS
+# The model with the best diagnostics is our ARIMA Model 
+
+# ARCH Modeling
+# Here we first square the residuals and plot the time series/ACF/PACF 
+# to see if there is correlation within the residuals.
+# If there is we can continue adding on to our ARIMA model with a gARCH 
+# aspect that helps in the volatity of our data.
+squared_res_fit <- fit$residuals^2
+
+sq_res <- plot_time_series(squared_res_fit, "Squared Residuals")
+
+sq_res
+ggplotly(sq_res)
+
+
+# ACF AND PACF PLOT FOR SQUARED RESIDUALS 
+plot_acf_pacf(squared_res_fit, 'S&P 500 Residuals^2')
+# The acf plot shows one significant lag, as does the pacf, 
+# but that isn't enough to suggest we need GARCH modeling
+gfit <- garch(fit$residuals, order = c(1,1), trace = TRUE)
